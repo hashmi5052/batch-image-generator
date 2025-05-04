@@ -1,0 +1,8 @@
+gradio
+diffusers
+transformers
+safetensors
+accelerate
+compel
+pillow
+tqdm
