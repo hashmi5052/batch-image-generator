@@ -1,29 +1,57 @@
-# LoRA Image Generator App
+# 🖼️ Batch Image Generator with LoRA & Model Selection
 
-This app lets you generate images using local LoRA and model checkpoints based on 1000 prompts from a `.csv` or `.txt` file.
+A local Python+Gradio app to generate bulk images from prompts using custom Stable Diffusion models and LoRA weights — with full offline support.
 
-## 🧰 Requirements
+---
+
+## 🚀 Features
+
+- Upload a `.csv` or `.txt` file with up to 1000 prompts.
+- Select models (checkpoints) and LoRAs from dropdown menus.
+- Choose starting number for filenames (e.g., `891.webp`, `892.webp`, ...).
+- Auto-creates folders under `output/` named after the starting number.
+- Progress tracking inside the Gradio interface.
+- Saves all images as `.webp` or `.png`.
+
+---
+
+## 🖥️ System Requirements
+
+- Windows 10/11 (fully tested)
 - Python 3.10
-- Windows 10/11
-- NVIDIA GPU (optional for faster results)
+- GPU (Recommended: NVIDIA RTX 4080 or similar)
+- All models and LoRA files stored **locally**
 
-## 🚀 Setup Instructions
+---
+
+
+---
+
+## 📦 Installation
 
 1. Clone the repo:
-git clone https://github.com/YOUR_USERNAME/lora-image-generator.git
-cd lora-image-generator
+   ```bash
+   git clone https://github.com/hashmi5052/batch-image-generator.git
+   cd batch-image-generator
 
-2. Install dependencies:
+
+
+2. Create and Activate a Virtual Environment (optional but recommended)
+
+```bash
+python -m venv venv
+venv\Scripts\activate  # On Windows
+
+# 3. Install Dependencies
 
 pip install -r requirements.txt
 
 
-3. Run the app:
-python app.py
+## 🧪 Usage Instructions
 
-4. Upload your `models/checkpoints/` and `models/lora/` manually into the folder.
+## Run the application
 
-## 📁 Folder Structure
-- `models/checkpoints/` → Put your `.safetensors` base models here
-- `models/lora/` → Put your LoRA files here
-- `output/` → Images will be saved here
+   python app.py
+
+
+
