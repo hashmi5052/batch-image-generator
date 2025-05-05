@@ -90,7 +90,7 @@ def gradio_ui():
         gr.Markdown("## 🖼️ Local Batch Image Generator (Checkpoints + LoRA)")
 
         with gr.Row():
-            prompt_file = gr.File(label="📄 Upload .csv or .txt Prompt File", file_types=[".csv", ".txt"])
+            prompt_file = gr.File(label="📄 Upload .csv, .txt, or .xlsx Prompt File", file_types=[".csv", ".txt", ".xlsx"])
             model_dropdown = gr.Dropdown(label="🧠 Select Checkpoint", choices=list_safetensors(CHECKPOINT_FOLDER))
             lora_dropdown = gr.Dropdown(label="🎨 Select LoRA (Optional)", choices=[""] + list_safetensors(LORA_FOLDER))
 
