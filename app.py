@@ -1,5 +1,6 @@
 import os
 import csv
+import pandas as pd
 import gradio as gr
 from PIL import Image
 import torch
@@ -7,30 +8,63 @@ from diffusers import StableDiffusionPipeline
 from safetensors.torch import load_file
 from compel import Compel
 
-# Define paths
+# Define folders
 CHECKPOINT_FOLDER = "models/checkpoints"
 LORA_FOLDER = "models/lora"
 OUTPUT_FOLDER = "output"
 
-# List models from folder
+# Utility: List safetensors in folder
 def list_safetensors(path):
     return [f for f in os.listdir(path) if f.endswith(".safetensors")]
 
-# Load prompts
-def load_prompts(file_path):
-    prompts = []
-    if file_path.endswith(".csv"):
-        with open(file_path, newline='', encoding='utf-8') as csvfile:
-            reader = csv.reader(csvfile)
-            for row in reader:
-                if row:
-                    prompts.append(row[0])
+# Read prompts and image numbers from the uploaded file
+def read_prompt_file(file_path):
+    if file_path.endswith(".xlsx"):
+        df = pd.read_excel(file_path)
+    elif file_path.endswith(".csv"):
+        df = pd.read_csv(file_path)
     elif file_path.endswith(".txt"):
-        with open(file_path, 'r', encoding='utf-8') as txtfile:
-            prompts = txtfile.read().splitlines()
-    return prompts
+        df = pd.read_csv(file_path, names=["prompt"])
+        df["image number"] = range(1, len(df) + 1)
+        return df
+    else:
+        raise ValueError("Unsupported file type.")
 
-# Load model + optional LoRA
+    # Normalize column names to lowercase and strip spaces
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Validate required columns
+    required_columns = ["prompt", "image number"]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required column(s): {', '.join(missing_columns)}. Found columns: {df.columns.tolist()}")
+
+    df = df.dropna(subset=["prompt"])
+    df["prompt"] = df["prompt"].astype(str)
+    df["image number"] = df["image number"].astype(int)
+    return df
+
+
+
+# Auto-detect starting number for display only
+def get_starting_number(file):
+    try:
+        df = read_prompt_file(file.name)
+        return int(df["image number"].iloc[0])
+    except Exception as e:
+        print(f"Error detecting starting number: {e}")
+        return 0
+
+# Create unique run folder
+def create_output_subfolder():
+    existing = [d for d in os.listdir(OUTPUT_FOLDER) if d.startswith("run_")]
+    existing_nums = [int(d.split("_")[1]) for d in existing if d.split("_")[1].isdigit()]
+    next_num = max(existing_nums, default=0) + 1
+    subfolder = os.path.join(OUTPUT_FOLDER, f"run_{next_num:03}")
+    os.makedirs(subfolder, exist_ok=True)
+    return subfolder
+
+# Load model and LoRA
 def load_pipeline(model_path, lora_path):
     pipe = StableDiffusionPipeline.from_single_file(
         model_path,
@@ -48,14 +82,11 @@ def load_pipeline(model_path, lora_path):
     pipe.enable_model_cpu_offload()
     return pipe
 
-# Generator function for streaming
-def generate_images_stream(prompt_file, model_name, lora_name, start_index, image_format,
+# Generate images from prompt file and save to numbered files
+def generate_images_stream(prompt_file, model_name, lora_name, image_format,
                            sampling_steps, guidance_scale, width, height):
-    prompts = load_prompts(prompt_file.name)
-    start_index = int(start_index)
-
-    output_subfolder = os.path.join(OUTPUT_FOLDER, str(start_index))
-    os.makedirs(output_subfolder, exist_ok=True)
+    df = read_prompt_file(prompt_file.name)
+    output_subfolder = create_output_subfolder()
 
     model_path = os.path.join(CHECKPOINT_FOLDER, model_name)
     lora_path = os.path.join(LORA_FOLDER, lora_name) if lora_name else None
@@ -63,11 +94,11 @@ def generate_images_stream(prompt_file, model_name, lora_name, start_index, imag
     pipe = load_pipeline(model_path, lora_path)
     compel_proc = Compel(tokenizer=pipe.tokenizer, text_encoder=pipe.text_encoder)
 
-    total = len(prompts)
-    for i, prompt in enumerate(prompts):
-        print(f"🖼️ [{i+1}/{total}] Generating: {prompt[:60]}...")
-
+    for i, row in df.iterrows():
+        prompt = row["prompt"]
+        number = row["image number"]
         prompt_embeds = compel_proc(prompt)
+
         image = pipe(
             prompt_embeds=prompt_embeds,
             num_inference_steps=int(sampling_steps),
@@ -76,30 +107,30 @@ def generate_images_stream(prompt_file, model_name, lora_name, start_index, imag
             height=int(height)
         ).images[0]
 
-        filename = f"{start_index + i}.{image_format}"
+        filename = f"{number}.{image_format}"
         image_path = os.path.join(output_subfolder, filename)
         image.save(image_path)
 
-        yield f"✅ [{i+1}/{total}] Image saved as: {filename}"
+        yield f"✅ Image saved: {filename}"
 
-    yield f"\n🎉 All {total} images generated in folder: {output_subfolder}"
+    yield f"🎉 All {len(df)} images saved in folder: {output_subfolder}"
 
 # Gradio UI
 def gradio_ui():
     with gr.Blocks(title="LoRA Batch Generator") as demo:
-        gr.Markdown("## 🖼️ Local Batch Image Generator (Checkpoints + LoRA)")
+        gr.Markdown("## 🖼️ Local Batch Image Generator with Numbered Outputs")
 
         with gr.Row():
-            prompt_file = gr.File(label="📄 Upload .csv, .txt, or .xlsx Prompt File", file_types=[".csv", ".txt", ".xlsx"])
+            prompt_file = gr.File(label="📄 Upload Prompt File (.csv, .xlsx, .txt)", file_types=[".csv", ".xlsx", ".txt"])
             model_dropdown = gr.Dropdown(label="🧠 Select Checkpoint", choices=list_safetensors(CHECKPOINT_FOLDER))
             lora_dropdown = gr.Dropdown(label="🎨 Select LoRA (Optional)", choices=[""] + list_safetensors(LORA_FOLDER))
 
         with gr.Row():
-            start_index = gr.Number(label="🔢 Starting Filename Number", value=891)
-            image_format = gr.Dropdown(label="📁 Image Format", choices=["webp", "png"], value="webp")
+            start_index = gr.Number(label="🔢 First Image Number (Auto-detected)", value=0, interactive=False)
+            image_format = gr.Dropdown(label="🖼️ Image Format", choices=["webp", "png"], value="webp")
 
         with gr.Row():
-            sampling_steps = gr.Number(label="🧮 Sampling Steps", value=30)
+            sampling_steps = gr.Number(label="⏱️ Sampling Steps", value=30)
             guidance_scale = gr.Number(label="🎯 Guidance Scale", value=7.5)
 
         with gr.Row():
@@ -107,11 +138,13 @@ def gradio_ui():
             height = gr.Number(label="📐 Height", value=512)
 
         run_button = gr.Button("🚀 Start Generating")
-        output_text = gr.Textbox(label="📢 Status (Real-Time)", lines=15)
+        output_text = gr.Textbox(label="📢 Status Log", lines=15)
+
+        prompt_file.change(fn=get_starting_number, inputs=[prompt_file], outputs=start_index)
 
         run_button.click(
             fn=generate_images_stream,
-            inputs=[prompt_file, model_dropdown, lora_dropdown, start_index, image_format,
+            inputs=[prompt_file, model_dropdown, lora_dropdown, image_format,
                     sampling_steps, guidance_scale, width, height],
             outputs=output_text
         )
