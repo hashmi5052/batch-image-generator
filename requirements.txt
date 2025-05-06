@@ -6,3 +6,5 @@ accelerate
 compel
 pillow
 tqdm
+pandas
+openpyxl
