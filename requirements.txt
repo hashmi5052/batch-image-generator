@@ -8,3 +8,4 @@ pillow
 tqdm
 pandas
 openpyxl
+peft
