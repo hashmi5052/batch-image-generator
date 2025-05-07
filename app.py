@@ -4,7 +4,7 @@ import pandas as pd
 import gradio as gr
 from PIL import Image
 import torch
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from safetensors.torch import load_file
 from compel import Compel
 
@@ -66,19 +66,36 @@ def create_output_subfolder():
 
 # Load model + LoRA
 def load_pipeline(model_path, lora_path):
-    pipe = StableDiffusionPipeline.from_single_file(
-        model_path,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        use_safetensors=True,
-        safety_checker=None,
-        requires_safety_checker=False
-    )
+    is_sdxl = "xl" in model_path.lower() or "sdxl" in model_path.lower()
+
+    if is_sdxl:
+        pipe = StableDiffusionXLPipeline.from_single_file(
+            model_path,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            use_safetensors=True,
+            variant="fp16" if torch.cuda.is_available() else None,
+            safety_checker=None,
+            requires_safety_checker=False
+        )
+    else:
+        pipe = StableDiffusionPipeline.from_single_file(
+            model_path,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            use_safetensors=True,
+            safety_checker=None,
+            requires_safety_checker=False
+        )
+
     pipe.to("cuda" if torch.cuda.is_available() else "cpu")
+
     if lora_path:
-        state_dict = load_file(lora_path)
-        pipe.load_lora_weights(state_dict)
+        try:
+            pipe.load_lora_weights(lora_path)
+        except Exception as e:
+            print(f"[WARN] Failed to load LoRA: {e}")
+
     pipe.enable_model_cpu_offload()
-    return pipe
+    return pipe, is_sdxl
 
 # Stop button function
 def stop_generation():
@@ -103,8 +120,17 @@ def generate_images_stream(prompt_file, model_name, lora_name, image_format,
     # Load pipeline
     model_path = os.path.join(CHECKPOINT_FOLDER, model_name)
     lora_path = os.path.join(LORA_FOLDER, lora_name) if lora_name else None
-    pipe = load_pipeline(model_path, lora_path)
-    compel_proc = Compel(tokenizer=pipe.tokenizer, text_encoder=pipe.text_encoder)
+    pipe = load_pipeline(model_path, lora_path)[0]
+
+    # Check if this is an SDXL model based on model name or architecture
+    is_sdxl = any(x in model_name.lower() for x in ["xl", "sdxl", "destin", "finaldestination", "epicrealismxl"])
+
+    if is_sdxl:
+        compel_proc = Compel(tokenizer=[pipe.tokenizer, pipe.tokenizer_2],
+                             text_encoder=[pipe.text_encoder, pipe.text_encoder_2],
+                             truncate_long_prompts=True)
+    else:
+        compel_proc = Compel(tokenizer=pipe.tokenizer, text_encoder=pipe.text_encoder)
 
     resume_file = "last_image_number.txt"
     last_number = 0
@@ -125,22 +151,36 @@ def generate_images_stream(prompt_file, model_name, lora_name, image_format,
         row = row[1]
         prompt = f"{POSITIVE_PHRASES}, {row['prompt']}"
         number = row["image number"]
-        prompt_embeds = compel_proc(prompt)
-        neg_embeds = compel_proc(NEGATIVE_PROMPT)
 
-        image = pipe(
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=neg_embeds,
-            num_inference_steps=int(sampling_steps),
-            guidance_scale=float(guidance_scale),
-            width=int(width),
-            height=int(height),
-            added_cond_kwargs={}  # Ensures proper structure
-        ).images[0]
+        if is_sdxl:
+            prompt_embeds, pooled_prompt_embeds = compel_proc(prompt)
+            neg_embeds, neg_pooled_embeds = compel_proc(NEGATIVE_PROMPT)
 
-        # Placeholder for future upscaling
+            image = pipe(
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_prompt_embeds=neg_embeds,
+                negative_pooled_prompt_embeds=neg_pooled_embeds,
+                num_inference_steps=int(sampling_steps),
+                guidance_scale=float(guidance_scale),
+                width=int(width),
+                height=int(height)
+            ).images[0]
+        else:
+            prompt_embeds = compel_proc(prompt)
+            neg_embeds = compel_proc(NEGATIVE_PROMPT)
+
+            image = pipe(
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=neg_embeds,
+                num_inference_steps=int(sampling_steps),
+                guidance_scale=float(guidance_scale),
+                width=int(width),
+                height=int(height)
+            ).images[0]
+
+        # Optional upscaling logic (to be added later)
         if upscale_model != "None":
-            # Apply GFPGAN / CodeFormer / Real-ESRGAN here (backend processing)
             pass
 
         filename = f"{number}.{image_format}"
